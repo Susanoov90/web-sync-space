@@ -1,7 +1,7 @@
 if (sessionStorage.getItem("websync-role") === "client") {
     console.log("[WebSyncSpace] client-content.ts injecté ✅");
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (message.type === "scroll") {
             window.scrollTo({
                 top: message.data.scrollY,

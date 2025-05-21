@@ -6,11 +6,11 @@ type ButtonProps = {
     linkTo: string
 }
 
-function WelcomeButton({content, linkTo} : ButtonProps) {
-    return(
-    <Link className="welcomeLink" to={linkTo}>
-      {content}
-    </Link>
+function WelcomeButton({ content, linkTo }: ButtonProps) {
+    return (
+        <Link className="welcomeLink" to={linkTo}>
+            {content}
+        </Link>
     )
 }
 
