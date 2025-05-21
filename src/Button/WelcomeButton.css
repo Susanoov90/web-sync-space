@@ -1,0 +1,16 @@
+.welcomeLink{
+    background-color: rgb(4, 83, 86);
+    color: white;
+    padding: 0.5rem;
+    margin: 0.3rem;
+}
+
+.welcomeLink:hover{
+    background-color: rgb(3, 52, 54);
+    color: white;
+}
+
+.welcomeLink:active{
+    background-color: rgb(3, 16, 54);
+    color: white;
+}

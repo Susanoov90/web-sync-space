@@ -1,0 +1,22 @@
+{
+    "manifest_version" : 3,
+    "version": "1.0.0",
+    "name": "web-sync-space",
+    "description": "Synchronisation en temps réel d'onglets avec rôle hôte ou client",
+    "permissions": [ "scripting",
+    "tabs"],
+    "background": {
+    "service_worker": "background.js"
+    },
+    "host_permissions": [
+        "http://*/*",
+        "https://*/*"
+    ],
+    "content_scripts": [
+        {
+        "matches": ["<all_urls>"],
+        "js": ["role-selector.js"],
+        "run_at": "document_idle"
+        }
+    ]
+}

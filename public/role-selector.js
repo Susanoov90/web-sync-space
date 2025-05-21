@@ -1,0 +1,10 @@
+sessionStorage.removeItem("websync-role");
+if (!sessionStorage.getItem("websync-role")) {
+    var isHost = confirm("Est-ce que cet onglet est l’hôte (host) ?");
+    sessionStorage.setItem("websync-role", isHost ? "host" : "client");
+    chrome.runtime.sendMessage({
+        type: isHost ? "inject-host" : "inject-client"
+    }, function (response) {
+        console.log("[RoleSelector] Injection déclenchée :", response);
+    });
+}
