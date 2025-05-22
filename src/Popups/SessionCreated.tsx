@@ -1,25 +1,37 @@
 import { useEffect, useState } from "react";
-import "./CreateSession.css";
+import { useLocation } from "react-router-dom";
+import "./SessionCreated.css";
 import { Button } from "@mui/material";
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import Tooltip from '@mui/material/Tooltip';
 
 import { db } from "../firebase";
 import { ref, set } from "firebase/database";
+import type { Tab } from "../types/Tab";
 
-function CreateSession() {
-  const [loader, setLoader] = useState<boolean>(true);
+function SessionCreated() {
+  const location = useLocation();
+  const selectedTab: Tab | null = location.state?.selectedTab || null;
+
+  const [loader, setLoader] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [error, setError] = useState<boolean>(false);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     const createSession = async () => {
+      if (!selectedTab?.url) {
+        setError(true);
+        setLoader(false);
+        return;
+      }
+
       try {
-        // 🔑 Génère un ID de session aléatoire simple (à améliorer)
         const newSessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
+
         await set(ref(db, `sessions/${newSessionId}`), {
           createdAt: new Date().toISOString(),
-          status: "active"
+          status: "active",
+          sharedURL: selectedTab.url
         });
 
         setSessionId(newSessionId);
@@ -32,7 +44,7 @@ function CreateSession() {
     };
 
     createSession();
-  }, []);
+  }, [selectedTab]);
 
   return (
     <>
@@ -44,11 +56,11 @@ function CreateSession() {
         <div className="contentSuccessCreateSession">
           <p>Votre session est active sous le lien :</p>
           <div className="contentSuccessCreateSession--copyAndPasteZone">
-            <code>https://websyncspace.app/join/{sessionId}</code>
+            <code>{sessionId}</code>
             <Tooltip title="Click to copy">
               <button
                 className="contentSuccessCreateSession--copyAndPasteZone__buttonCopy"
-                onClick={() => navigator.clipboard.writeText(`https://websyncspace.app/join/${sessionId}`)}
+                onClick={() => navigator.clipboard.writeText(`${sessionId}`)}
               >
                 <ContentCopyIcon />
               </button>
@@ -64,4 +76,4 @@ function CreateSession() {
   );
 }
 
-export default CreateSession;
+export default SessionCreated;
