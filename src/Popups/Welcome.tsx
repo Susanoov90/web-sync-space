@@ -1,4 +1,4 @@
-import Button from "../Button/WelcomeButton"
+import WelcomeButton from "../Button/WelcomeButton"
 import "./Welcome.css"
 
 function Welcome() {
@@ -6,8 +6,8 @@ function Welcome() {
         <>
             <p>Co navigate, Sharing your screens to many person as easy !</p>
             <div className="welcome-buttons">
-                <Button content="Create a sharing session" linkTo="/create"/>
-                <Button content="Join an existing sharing session" linkTo="/join"/>
+                <WelcomeButton content="Create a sharing session" linkTo="/create-session"/>
+                <WelcomeButton content="Join an existing sharing session" linkTo="/join-session"/>
             </div>
         </>
     )
