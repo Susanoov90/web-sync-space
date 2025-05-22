@@ -1,22 +1,14 @@
-//import { Link } from "react-router-dom"
-import "./WelcomeButton.css"
+import "./WelcomeButton.css";
 
 type ButtonProps = {
-    content: string,
-    joinCode: string
-}
+  content: string;
+  joinCode: string;
+  onClick?: () => void; // ➕ pour laisser le parent contrôler le comportement
+};
 
-function SubmitButton({ content, joinCode }: ButtonProps) {
-  const handleJoiningSession = () => {
-    if (joinCode === "ABC-132") {
-      alert("✅ Bon mot de passe !");
-    } else {
-      alert("❌ Mauvais mot de passe !");
-    }
-  };
-
+function SubmitButton({ content, onClick }: ButtonProps) {
   return (
-    <button className="welcomeLink" onClick={handleJoiningSession}>
+    <button className="welcomeLink" onClick={onClick}>
       {content}
     </button>
   );
