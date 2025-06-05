@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "name": "web-sync-space",
     "description": "Synchronisation en temps réel d'onglets avec rôle hôte ou client",
-    "permissions": [ "scripting", "tabs", "activeTab"],
+    "permissions": [ "scripting", "tabs", "storage"],
     "background": {
     "service_worker": "background.js"
     },
