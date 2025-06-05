@@ -2,7 +2,6 @@ import { useState } from 'react';
 import TextField from '@mui/material/TextField';
 import { ref, get } from 'firebase/database';
 import { db } from '../firebase';
-import SubmitButton from '../Button/SubmitButton';
 
 function JoinSession() {
   const [code, setCode] = useState<string>('');
@@ -19,10 +18,37 @@ function JoinSession() {
       }
 
       const data = snapshot.val();
+      if (data.sharedURL && data.sharedURL !== '') {
+        // 1) On ouvre un nouvel onglet
+        chrome.tabs.create({ url: data.sharedURL }, (tab) => {
+          if (!tab.id) {
+            setError("Impossible d’ouvrir l’onglet client.");
+            return;
+          }
 
-      if (data.sharedURL) {
-        sessionStorage.setItem("websync-role", "client");
-        window.open(data.sharedURL, '_blank');
+          // 2) Injecter dans l’onglet client le rôle et l’ID
+          chrome.scripting.executeScript(
+            {
+              target: { tabId: tab.id },
+              func: (sessionId: string) => {
+                sessionStorage.setItem("websync-role", "client");
+                sessionStorage.setItem("websync-session", sessionId);
+              },
+              args: [code],
+            },
+            () => {
+              console.log("✅ Rôle + sessionId injectés dans l’onglet client :", code);
+
+              // 3) Envoyer le message pour injecter client-content.js
+              chrome.runtime.sendMessage(
+                { type: "inject-client" },
+                (res) => {
+                  console.log("✅ client-content.js injecté :", res);
+                }
+              );
+            }
+          );
+        });
       } else {
         setError("Aucune URL partagée pour cette session.");
       }
@@ -35,7 +61,6 @@ function JoinSession() {
   return (
     <>
       <p>Enter the join code of the session</p>
-
       <TextField
         hiddenLabel
         id="textfieldCustom"
@@ -51,11 +76,9 @@ function JoinSession() {
           },
         }}
       />
-
       {error && <p style={{ color: 'red' }}>{error}</p>}
-
       <div>
-        <SubmitButton content="SUBMIT" joinCode={code} onClick={handleSubmit} />
+        <button onClick={handleSubmit}>SUBMIT</button>
       </div>
     </>
   );
