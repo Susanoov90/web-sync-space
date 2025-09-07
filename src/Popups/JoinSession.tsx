@@ -1,60 +1,43 @@
 import { useState } from 'react';
 import TextField from '@mui/material/TextField';
-import { ref, get } from 'firebase/database';
-import { db } from '../firebase';
 
-function JoinSession() {
-  const [code, setCode] = useState<string>('');
+type BgOk = { ok: true } & Record<string, unknown>;
+type BgErr = { ok: false; error?: string };
+type BgResp<T> = (BgOk & T) | BgErr;
+
+function bg<T extends object = object>(msg: unknown): Promise<BgResp<T>> {
+  return new Promise((resolve) => chrome.runtime.sendMessage(msg, (resp) => resolve(resp as BgResp<T>)));
+}
+
+export default function JoinSession() {
+  const [code, setCode]   = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy]   = useState(false);
 
   const handleSubmit = async () => {
+    setError(null);
+    const sessionId = code.trim().toUpperCase();
+    if (!sessionId) { setError("Saisis un code."); return; }
+    setBusy(true);
     try {
-      const sessionRef = ref(db, `sessions/${code}`);
-      const snapshot = await get(sessionRef);
+      // 1) Vérifier l’existence via background
+      const r = await bg<{ exists: boolean; sharedURL?: string }>({
+        type: "wrtc-check-session",
+        sessionId
+      });
+      if (!r.ok) throw new Error(r.error || "check failed");
+      if (!r.exists) { setError("Aucune session active pour ce code."); return; }
 
-      if (!snapshot.exists()) {
-        setError("Cette session n'existe pas.");
-        return;
-      }
+      // 2) Ouvrir la page Viewer plein écran
+      const viewerUrl = chrome.runtime.getURL(`index.html#/viewer?code=${encodeURIComponent(sessionId)}`);
+      chrome.tabs.create({ url: viewerUrl });
 
-      const data = snapshot.val();
-      if (data.sharedURL && data.sharedURL !== '') {
-        // 1) On ouvre un nouvel onglet
-        chrome.tabs.create({ url: data.sharedURL }, (tab) => {
-          if (!tab.id) {
-            setError("Impossible d’ouvrir l’onglet client.");
-            return;
-          }
-
-          // 2) Injecter dans l’onglet client le rôle et l’ID
-          chrome.scripting.executeScript(
-            {
-              target: { tabId: tab.id },
-              func: (sessionId: string) => {
-                sessionStorage.setItem("websync-role", "client");
-                sessionStorage.setItem("websync-session", sessionId);
-              },
-              args: [code],
-            },
-            () => {
-              console.log("✅ Rôle + sessionId injectés dans l’onglet client :", code);
-
-              // 3) Envoyer le message pour injecter client-content.js
-              chrome.runtime.sendMessage(
-                { type: "inject-client" },
-                (res) => {
-                  console.log("✅ client-content.js injecté :", res);
-                }
-              );
-            }
-          );
-        });
-      } else {
-        setError("Aucune URL partagée pour cette session.");
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Une erreur est survenue.");
+      // 3) Mémoriser pour Resume
+      chrome.storage.local.set({ websync: { role: "viewer", sessionId } });
+    } catch (e: any) {
+      setError(e?.message || "Une erreur est survenue.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -66,22 +49,20 @@ function JoinSession() {
         id="textfieldCustom"
         variant="filled"
         size="small"
+        value={code}
         onChange={(e) => setCode(e.target.value)}
         slotProps={{
           input: {
-            style: {
-              color: 'white',
-              backgroundColor: '#333',
-            },
+            style: { color: 'white', backgroundColor: '#333' },
           },
         }}
       />
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && <p style={{ color: 'tomato' }}>{error}</p>}
       <div>
-        <button onClick={handleSubmit}>SUBMIT</button>
+        <button onClick={handleSubmit} disabled={busy}>
+          {busy ? "..." : "SUBMIT"}
+        </button>
       </div>
     </>
   );
 }
-
-export default JoinSession;

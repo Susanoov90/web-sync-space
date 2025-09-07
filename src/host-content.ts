@@ -1,56 +1,49 @@
-// --- host-content.ts ---
-/* Ce fichier sera injecté DANS la page web (ex. commons.wikimedia.org),
-   après avoir fixé sessionStorage.role="host" et sessionStorage.session="ABCD12" */
-import { db } from "./firebase";       // (Attention : à bundler / compiler en plain JS)
-import { ref, push } from "firebase/database";
+// // src/host-content.ts
+// (function () {
+//   const role = sessionStorage.getItem("websync-role");
+//   const sessionId = sessionStorage.getItem("websync-session");
+//   if (role !== "host" || !sessionId) {
+//     console.warn("[host-content] rôle/session manquant"); 
+//     return;
+//   }
 
-const sessionId = sessionStorage.getItem("websync-session")!;
-const role = sessionStorage.getItem("websync-role");
+//   // Throttle simple (~33 fps)
+//   const throttle = (fn: (...a: any[]) => void, ms: number) => {
+//     let last = 0;
+//     return (...args: any[]) => {
+//       const now = performance.now();
+//       if (now - last >= ms) { last = now; fn(...args); }
+//     };
+//   };
 
-console.log(
-  "[host-content] démarrage – role=", role,
-  "sessionId=", sessionId
-);
+//   // Envoi d'un event vers le background → RTDB
+//   const send = (evType: string, data: any) =>
+//     chrome.runtime.sendMessage({ type: "wss-event", sessionId, evType, data });
 
-if (role === "host" && sessionId) {
-  console.log("[WebSyncSpace] host-content.ts injecté ✅");
-  console.log("📌 Session ID :", sessionId);
+//   // Preuve de vie fiable : mirroring du scroll
+//   window.addEventListener(
+//     "scroll",
+//     throttle(() => {
+//       send("scroll", { x: window.scrollX, y: window.scrollY });
+//     }, 30),
+//     { passive: true }
+//   );
 
-  window.addEventListener("scroll", () => {
-    sendEvent("scroll", { scrollY: window.scrollY });
-  });
+//   // Clic “naïf” (coordonnées)
+//   document.addEventListener(
+//     "click",
+//     (e) => {
+//       const ce = e as MouseEvent;
+//       send("click", { x: ce.clientX, y: ce.clientY });
+//     },
+//     true
+//   );
 
-  document.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    const xpath = getXPath(target);
-    sendEvent("click", { xpath });
-  });
+//   // (optionnel) surlignage texte → debug
+//   document.addEventListener("mouseup", () => {
+//     const text = String(window.getSelection()?.toString() || "").trim();
+//     if (text) send("highlight", { text });
+//   });
 
-  document.addEventListener("mouseup", () => {
-    const selection = window.getSelection();
-    const text = selection?.toString();
-    if (text) {
-      sendEvent("highlight", { text });
-    }
-  });
-} else {
-  console.warn("⛔ Rôle 'host' ou sessionId non défini dans sessionStorage.");
-}
-
-  function sendEvent(type: string, data: any) {
-    push(ref(db, `sessions/${sessionId}/events`), {
-      type,
-      data,
-      timestamp: Date.now()
-    });
-    console.log(`📤 ${type} envoyé :`, data);
-  }
-
-function getXPath(el: HTMLElement): string {
-  if (el.id) return `//*[@id="${el.id}"]`;
-  if (el === document.body) return "/html/body";
-  const ix = Array.from(el.parentNode!.childNodes)
-    .filter((node) => node.nodeName === el.nodeName)
-    .indexOf(el);
-  return `${getXPath(el.parentNode as HTMLElement)}/${el.nodeName}[${ix + 1}]`;
-}
+//   console.debug("[host-content] prêt, session:", sessionId);
+// })();

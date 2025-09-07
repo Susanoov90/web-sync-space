@@ -1,18 +1,9 @@
 {
-    "manifest_version" : 3,
-    "version": "1.0.0",
-    "name": "web-sync-space",
-    "description": "Synchronisation en temps réel d'onglets avec rôle hôte ou client",
-    "permissions": [ "scripting", "tabs", "storage"],
-    "background": {
-    "service_worker": "background.js"
-    },
-    "host_permissions": [
-        "http://*/*",
-        "https://*/*"
-    ],
-    "action": {
-        "default_popup": "index.html"
-    },
-    "content_scripts": []
+  "manifest_version": 3,
+  "name": "WebSyncSpace",
+  "version": "1.0.0",
+  "permissions": ["tabs", "storage", "scripting", "tabCapture"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "index.html" }
 }

@@ -1,48 +1,44 @@
-// src/Popups/BridgeToCreateSession.tsx
-
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Button } from "@mui/material";
 import SelectTab from "../TabLogic/SelectTab";
 import type { Tab } from "../types/Tab";
-import { Button } from "@mui/material";
+
+type BgOk = { ok: true } & Record<string, unknown>;
+type BgErr = { ok: false; error?: string };
+type BgResp<T> = (BgOk & T) | BgErr;
+
+function bg<T extends object = object>(msg: unknown): Promise<BgResp<T>> {
+  return new Promise((resolve) => chrome.runtime.sendMessage(msg, (resp) => resolve(resp as BgResp<T>)));
+}
 
 export default function BridgeToCreateSession() {
   const [selectedTab, setSelectedTab] = useState<Tab | null>(null);
-  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const handleContinue = () => {
-    if (!selectedTab?.url) return;
+  const handleContinue = async () => {
+    if (!selectedTab?.id || !selectedTab?.url) return;
+    setBusy(true); setErr(null);
 
-    // 1) On prépare un ID de session (ici on le génère côté React, 
-    //    mais vous pouvez aussi attendre que SessionCreated l'écrive dans Firebase)
-    const newSessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    try {
+      // 1) Génère le code
+      const newSessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-    // 2) On envoie le rôle + sessionId DANS la page hôte :
-    chrome.scripting.executeScript(
-      {
-        target: { tabId: selectedTab.id! }, // ID de l’onglet hôte choisi par l’utilisateur
-        func: (sessionId: string) => {
-          // Ce code s’exécutera **dans le contexte de la page** (ex. commons.wikimedia.org)
-          sessionStorage.setItem("websync-role", "host");
-          sessionStorage.setItem("websync-session", sessionId);
-        },
-        args: [newSessionId],
-      },
-      () => {
-        console.log("✅ Rôle + sessionId injectés dans l’onglet hôte :", newSessionId);
+      // 2) Crée la session côté Firebase (meta)
+      const r = await bg<{}>({ type: "wrtc-init-session", sessionId: newSessionId, sharedURL: selectedTab.url });
+      if (!r.ok) throw new Error(r.error || "wrtc-init-session failed");
 
-        // 3) Ensuite, on injecte host-content.js (le vrai content script qui enverra scroll / clic / highlight)
-        chrome.runtime.sendMessage(
-          { type: "inject-host" },
-          (res) => {
-            console.log("✅ host-content.js injecté :", res);
-          }
-        );
-      }
-    );
+      // 3) Mémorise pour Resume
+      await chrome.storage.local.set({ websync: { role: "host", sessionId: newSessionId, tabId: selectedTab.id } });
 
-    // 4) On redirige le user vers la page SessionCreated pour stocker l’ID dans Firebase
-    navigate("/created", { state: { selectedTab, newSessionId } });
+      // 4) Ouvre la page plein écran Host
+      const url = chrome.runtime.getURL(`index.html#/host?code=${newSessionId}&tabId=${selectedTab.id}`);
+      chrome.tabs.create({ url });
+    } catch (e: any) {
+      setErr(e?.message || "Erreur lors de la création de la session.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -50,12 +46,13 @@ export default function BridgeToCreateSession() {
       <p>Hold on... You're almost ready!</p>
       <SelectTab onSelectTab={(tab) => setSelectedTab(tab)} />
       <br />
+      {err && <p style={{ color: "tomato" }}>{err}</p>}
       <Button
-        disabled={!selectedTab}
+        disabled={!selectedTab || busy}
         onClick={handleContinue}
         variant="contained"
       >
-        CREATE SESSION
+        {busy ? "..." : "CREATE SESSION"}
       </Button>
     </>
   );
