@@ -1,6 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WebSyncSpace",
+  "short_name": "WSS",
+  "description": "Co-navigation en temps réel dans le navigateur entre plusieurs personnes",
   "version": "1.0.0",
   "permissions": ["tabs", "storage", "scripting", "tabCapture"],
   "host_permissions": ["https://*/*", "http://*/*"],
