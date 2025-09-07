@@ -1,3 +1,9 @@
+---
+title: Privacy Policy – WebSyncSpace
+permalink: /privacy/
+---
+{% raw %}{% endraw %}
+
 # Privacy Policy – WebSyncSpace
 
 _Last updated: September 2025_
