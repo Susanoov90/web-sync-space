@@ -6,7 +6,7 @@ import { Button, Tooltip } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import type { Tab } from "../types/Tab";
 
-type LocationState = { selectedTab: Tab; newSessionId: string };
+type LocationState = { selectedTab: Tab; newSessionId: string }; 
 
 // Helper promisifié typé pour chrome.storage
 function setLocalStorage<T extends object>(obj: T): Promise<void> {
