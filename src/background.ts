@@ -9,13 +9,13 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // === Firebase init ===
 const firebaseConfig = {
-  apiKey: "AIzaSyCYWiWZtaC_GCGP-u6q4uuyI7LDCL6tpuA",
-  authDomain: "web-sync-space.firebaseapp.com",
-  databaseURL: "https://web-sync-space-default-rtdb.firebaseio.com",
-  projectId: "web-sync-space",
-  storageBucket: "web-sync-space.appspot.com",
-  messagingSenderId: "191633119192",
-  appId: "1:191633119192:web:fd9e5a60799d15a09d84ad",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);
