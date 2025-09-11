@@ -7,12 +7,12 @@
   <meta name="color-scheme" content="light dark">
   <style>
     :root{
-      --accent-1:#60a5fa; /* blue */
-      --accent-2:#7c3aed; /* violet */
+      --accent-1:rgb(12, 136, 141); /* blue */
+      --accent-2:rgb(10, 101, 104); /* special green for WebSyncSpace */
       --bg-dark:#0b1120;
       --card-bg:#ffffff;
       --text:#0b0f19;
-      --muted:#54607a;
+      --muted:rgb(8, 90, 93);
       --ring: 0 10px 30px rgba(0,0,0,.15);
     }
     @media (prefers-color-scheme: dark){
@@ -30,7 +30,7 @@
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
       color:var(--text);
       background: radial-gradient(1200px 600px at 10% -10%, rgba(96,165,250,.35), transparent 60%),
-                  radial-gradient(1000px 700px at 110% 10%, rgba(124,58,237,.35), transparent 65%),
+                  radial-gradient(1000px 700px at 110% 10%, rgba(13, 153, 158, 0.35), transparent 65%),
                   linear-gradient(135deg, #0b1220, #121a2f 60%, #111827);
       display:flex;
       align-items:center;
@@ -186,7 +186,6 @@
       <ul>
         <li><code>tabCapture</code>: required to capture the content of the tab you select.</li>
         <li><code>tabs</code>: required to identify and select the active tab for sharing.</li>
-        <li><code>scripting</code>: required to inject necessary scripts to initialize WebRTC.</li>
         <li><code>storage</code>: required to store small technical preferences (session code, role).</li>
         <li><code>host_permissions</code>: required so that the extension can operate on the tab chosen by the user.</li>
       </ul>
