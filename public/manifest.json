@@ -4,7 +4,7 @@
   "short_name": "WSS",
   "description": "Co-navigation en temps réel dans le navigateur entre plusieurs personnes",
   "version": "1.0.0",
-  "permissions": ["tabs", "storage", "scripting", "tabCapture"],
+  "permissions": ["tabs", "storage", "tabCapture"],
   "host_permissions": ["https://*/*", "http://*/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "index.html" }
