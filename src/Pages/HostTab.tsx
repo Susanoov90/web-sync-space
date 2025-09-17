@@ -1,5 +1,6 @@
 // src/Pages/HostTab.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
+import ShareCodeButton from "../Button/ShareCodeButton";
 
 /** ---- Types & helpers ---- */
 type BgOk = { ok: true } & Record<string, unknown>;
@@ -238,7 +239,7 @@ export default function HostTab(): JSX.Element {
     <div style={{ padding: 16, color: "#eee", background: "#121212", minHeight: "100vh" }}>
       <h2 style={{ margin: "0 0 8px" }}>Host — WebSyncSpace</h2>
       <div style={{ opacity: 0.8, marginBottom: 12 }}>
-        Session: <b>{sessionId || "—"}</b> &nbsp;|&nbsp; TabId: <b>{Number.isFinite(tabId ?? NaN) ? tabId : "—"}</b>
+        Session: <b>{sessionId || "—"} <ShareCodeButton sessionCode={sessionId} /></b> &nbsp;|&nbsp; TabId: <b>{Number.isFinite(tabId ?? NaN) ? tabId : "—"}</b>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
