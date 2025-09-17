@@ -5,6 +5,7 @@ import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select, { type SelectChangeEvent } from "@mui/material/Select";
+import "./SelecTab.css"
 
 export interface Tab {
   id: number;
@@ -51,14 +52,14 @@ export default function SelectTab({ onSelectTab }: SelectTabProps) {
 
   return (
     <FormControl fullWidth>
-      <InputLabel id="select-tab-label">Select Tab to Share</InputLabel>
+      <InputLabel style={{color: "#2e4fb0ff"}} id="select-tab-label">Select Tab to Share</InputLabel>
       <Select
         labelId="select-tab-label"
         id="select-tab"
         value={selectedTabId === "" ? "" : selectedTabId.toString()}
         label="Select Tab to Share"
         onChange={handleChange}
-        style={{ color: "#fff" }}
+        style={{ color: "#4874f9ff" }}
       >
         {tabs.map((tab) => (
           <MenuItem key={tab.id} value={tab.id.toString()}>
