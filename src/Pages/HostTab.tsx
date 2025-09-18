@@ -71,6 +71,36 @@ type PcBundle = {
   answerPollId: number | null;
 };
 
+/* ----------------------------- */
+/*   Twilio ICE helper (backend) */
+/* ----------------------------- */
+async function loadIceServers(): Promise<RTCIceServer[]> {
+  // 1) cache ~45min (chrome.storage.local)
+  try {
+    const key = "wss_ice_cache";
+    const cached: any = await new Promise((resolve) =>
+      chrome.storage.local.get([key], (r) => resolve(r[key]))
+    );
+    if (cached?.iceServers && cached?.expiresAt && cached.expiresAt > Date.now()) {
+      return cached.iceServers as RTCIceServer[];
+    }
+  } catch { /* ignore */ }
+
+  // 2) fetch depuis ton backend (remplace l’URL en prod)
+  const resp = await fetch("https://websyncspace-twilio-ice.com/ice", { method: "GET" });
+  if (!resp.ok) throw new Error("Failed to fetch ICE servers");
+  const data = await resp.json();
+  const iceServers: RTCIceServer[] = data.iceServers ?? data.ice_servers ?? [];
+
+  // 3) cache 45 min
+  try {
+    const expiresAt = Date.now() + 45 * 60 * 1000;
+    chrome.storage.local.set({ wss_ice_cache: { iceServers, expiresAt } });
+  } catch { /* ignore */ }
+
+  return iceServers;
+}
+
 export default function HostTab(): JSX.Element {
   // 1) Try to read from hash
   const hashCode  = useHashQueryParam("code");
@@ -105,6 +135,115 @@ export default function HostTab(): JSX.Element {
   const pcs = useRef<Map<string, PcBundle>>(new Map());
   const viewersPollId = useRef<number | null>(null);
 
+  // ===== [9a] Monitoring host (toggle + volume) =====
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const monitorGainRef = useRef<GainNode | null>(null);
+  const monitorSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const [monitorOn, setMonitorOn] = useState<boolean>(() => localStorage.getItem("wss_monitorOn") === "1");
+  const [monitorVolume, setMonitorVolume] = useState<number>(() => Number(localStorage.getItem("wss_monitorVolume") ?? 0.5));
+  useEffect(() => { localStorage.setItem("wss_monitorOn", monitorOn ? "1" : "0"); }, [monitorOn]);
+  useEffect(() => {
+    localStorage.setItem("wss_monitorVolume", String(monitorVolume));
+    if (monitorGainRef.current) monitorGainRef.current.gain.value = monitorVolume;
+  }, [monitorVolume]);
+
+  function handleToggleMonitor(next: boolean) {
+    setMonitorOn(next);
+    if (next) {
+      if (streamRef.current) setupMonitoring(streamRef.current);
+      else console.warn("[WSS] Monitoring ON demandé mais pas de stream partagé (lance d’abord le partage).");
+    } else {
+      teardownMonitoring();
+    }
+  }
+  function setupMonitoring(stream: MediaStream) {
+    if (audioCtxRef.current && monitorGainRef.current) {
+      monitorGainRef.current.gain.value = monitorVolume;
+      return;
+    }
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length) { console.warn("[WSS] Aucun audio à monitorer sur la source."); return; }
+    const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
+    const ctx: AudioContext = new Ctx();
+    audioCtxRef.current = ctx;
+
+    const src = ctx.createMediaStreamSource(new MediaStream([audioTracks[0]]));
+    monitorSourceRef.current = src;
+    const delay = ctx.createDelay(); delay.delayTime.value = 0.03; // 30ms pour limiter larsen
+    const gain = ctx.createGain(); gain.gain.value = monitorVolume; monitorGainRef.current = gain;
+    src.connect(delay); delay.connect(gain);
+
+    const dest = ctx.createMediaStreamDestination();
+    gain.connect(dest);
+
+    if (!audioElRef.current) {
+      const a = document.createElement("audio");
+      a.autoplay = true; a.muted = false; // a.playsInline n'existe pas sur audio
+      audioElRef.current = a;
+      document.body.appendChild(a);
+    }
+    audioElRef.current.srcObject = dest.stream;
+    if (ctx.state === "suspended") ctx.resume().catch(()=>{});
+  }
+  function teardownMonitoring() {
+    try {
+      if (audioElRef.current) {
+        audioElRef.current.srcObject = null;
+        audioElRef.current.parentNode?.removeChild(audioElRef.current);
+        audioElRef.current = null;
+      }
+      try { monitorSourceRef.current?.disconnect(); } catch {}
+      monitorSourceRef.current = null;
+      try { monitorGainRef.current?.disconnect(); } catch {}
+      monitorGainRef.current = null;
+      if (audioCtxRef.current) { audioCtxRef.current.close().catch(()=>{}); audioCtxRef.current = null; }
+    } catch (e) { console.warn("[WSS] teardown monitoring error", e); }
+  }
+  // ================================================
+
+  // ===== [9b] Micro host + Push-to-talk =====
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const micTrackRef = useRef<MediaStreamTrack | null>(null);
+  const [pttActive, setPttActive] = useState(false);
+
+  useEffect(() => {
+    const kd = (e: KeyboardEvent) => { if (e.code === "Space" && !e.repeat) { e.preventDefault(); pttDown(); } };
+    const ku = (e: KeyboardEvent) => { if (e.code === "Space") { e.preventDefault(); pttUp(); } };
+    window.addEventListener("keydown", kd);
+    window.addEventListener("keyup", ku);
+    return () => { window.removeEventListener("keydown", kd); window.removeEventListener("keyup", ku); };
+  }, [monitorVolume]);
+
+  async function ensureMicPrepared() {
+    if (micTrackRef.current) return;
+    try {
+      const m = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = m;
+      const t = m.getAudioTracks()[0];
+      t.enabled = false; // OFF par défaut
+      micTrackRef.current = t;
+
+      // ajouter la piste micro à TOUS les pc viewers existants (et futurs dans setupPcForViewer)
+      pcs.current.forEach(({ pc }) => { try { pc.addTrack(t, m); } catch {} });
+    } catch (err) {
+      console.warn("[WSS] Micro non disponible/autorisé", err);
+    }
+  }
+  function pttDown() {
+    if (!micTrackRef.current) return;
+    micTrackRef.current.enabled = true;
+    setPttActive(true);
+    if (monitorGainRef.current) monitorGainRef.current.gain.value = Math.max(0, monitorVolume * 0.2);
+  }
+  function pttUp() {
+    if (!micTrackRef.current) return;
+    micTrackRef.current.enabled = false;
+    setPttActive(false);
+    if (monitorGainRef.current) monitorGainRef.current.gain.value = monitorVolume;
+  }
+  // =======================================
+
   useEffect(() => {
     const onBeforeUnload = () => { void stopSharing(); };
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -126,6 +265,12 @@ export default function HostTab(): JSX.Element {
       const stream = await captureTabById(tabId);
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
+
+      // [9a] si toggle déjà ON, brancher le monitoring maintenant
+      if (monitorOn) setupMonitoring(stream);
+
+      // [9b] préparer la piste micro (désactivée) pour PTT
+      await ensureMicPrepared();
 
       if (viewersPollId.current) window.clearInterval(viewersPollId.current);
       viewersPollId.current = window.setInterval(pollViewers, 800);
@@ -157,7 +302,14 @@ export default function HostTab(): JSX.Element {
     const stream = streamRef.current;
     if (!stream) return;
 
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    // 🔁 ICI: on remplace la création du PC par Twilio ICE (via backend)
+    const iceServers = await loadIceServers();
+    const pc = new RTCPeerConnection({
+      iceServers,
+      iceTransportPolicy: "all",
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
+    });
 
     const control = pc.createDataChannel("control");
     control.onopen = () => console.log("[host] control channel open for", viewerId);
@@ -175,7 +327,12 @@ export default function HostTab(): JSX.Element {
       if (!rr.ok) console.warn("add-offer-cand-v failed:", rr.error);
     };
 
+    // tracks du display
     stream.getTracks().forEach((t: MediaStreamTrack) => pc.addTrack(t, stream));
+    // [9b] si la piste micro existe déjà, l’ajouter aussi à ce nouveau PC
+    if (micStreamRef.current && micTrackRef.current) {
+      try { pc.addTrack(micTrackRef.current, micStreamRef.current); } catch {}
+    }
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -226,6 +383,16 @@ export default function HostTab(): JSX.Element {
       try { b.pc.close(); } catch {}
     });
     pcs.current.clear();
+
+    // [9b] couper micro si actif
+    try { micTrackRef.current && (micTrackRef.current.enabled = false); } catch {}
+    try { micStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    micTrackRef.current = null;
+    micStreamRef.current = null;
+
+    // [9a] démonter le monitoring local
+    teardownMonitoring();
+
     try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     streamRef.current = null;
 
@@ -249,6 +416,29 @@ export default function HostTab(): JSX.Element {
         <button onClick={() => void stopSharing()} disabled={!isSharing}>Stop</button>
       </div>
 
+      {/* [9a] Toggle monitor + volume */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input type="checkbox" checked={monitorOn} onChange={(e) => handleToggleMonitor(e.target.checked)} />
+          Écouter l'audio du partage (monitor)
+        </label>
+        {monitorOn && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span>Volume</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={monitorVolume}
+              onChange={(e) => setMonitorVolume(Number(e.target.value))}
+              style={{ width: 200 }}
+            />
+            <span>{Math.round(monitorVolume * 100)}%</span>
+          </div>
+        )}
+      </div>
+
       <div style={{ marginBottom: 8 }}>Status: {status}</div>
       {err && <div style={{ color: "tomato", marginBottom: 8 }}>{err}</div>}
 
@@ -259,6 +449,30 @@ export default function HostTab(): JSX.Element {
         muted
         style={{ width: "min(90vw, 1200px)", maxHeight: "70vh", background: "#000", borderRadius: 8, display: "block", marginBottom: 12 }}
       />
+
+      {/* [9b] Push-to-talk */}
+      <div style={{ marginBottom: 16 }}>
+        <button
+          onMouseDown={pttDown}
+          onMouseUp={pttUp}
+          onTouchStart={pttDown}
+          onTouchEnd={pttUp}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: pttActive ? "#d32f2f" : "#1976d2",
+            color: "white",
+            border: "none",
+            cursor: "pointer"
+          }}
+          title="Maintiens pour parler (raccourci: Espace)"
+        >
+          {pttActive ? "En train de parler…" : "Appuyer pour parler (PTT)"}
+        </button>
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+          Astuce: utilise des écouteurs pour éviter le larsen.
+        </div>
+      </div>
 
       <div style={{ fontWeight: 600, marginBottom: 6 }}>
         Viewers: {connectedCount} / {viewerIds.length}

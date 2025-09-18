@@ -1,3 +1,4 @@
+// src/Pages/ViewerTab.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /** ---- Types ---- */
@@ -24,6 +25,36 @@ function useHashQueryParam(name: string): string {
 
 function genViewerId(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+/* ----------------------------- */
+/*   Twilio ICE helper (backend) */
+/* ----------------------------- */
+async function loadIceServers(): Promise<RTCIceServer[]> {
+  // 1) cache ~45min (chrome.storage.local)
+  try {
+    const key = "wss_ice_cache";
+    const cached: any = await new Promise((resolve) =>
+      chrome.storage.local.get([key], (r) => resolve(r[key]))
+    );
+    if (cached?.iceServers && cached?.expiresAt && cached.expiresAt > Date.now()) {
+      return cached.iceServers as RTCIceServer[];
+    }
+  } catch { /* ignore storage errors */ }
+
+  // 2) fetch depuis ton backend (remplace l’URL en prod)
+  const resp = await fetch("https://websyncspace-twilio-ice.com/ice", { method: "GET" });
+  if (!resp.ok) throw new Error("Failed to fetch ICE servers");
+  const data = await resp.json();
+  const iceServers: RTCIceServer[] = data.iceServers ?? data.ice_servers ?? [];
+
+  // 3) cache 45 min
+  try {
+    const expiresAt = Date.now() + 45 * 60 * 1000;
+    chrome.storage.local.set({ wss_ice_cache: { iceServers, expiresAt } });
+  } catch { /* ignore */ }
+
+  return iceServers;
 }
 
 export default function ViewerTab(): JSX.Element {
@@ -79,11 +110,18 @@ export default function ViewerTab(): JSX.Element {
       }
       if (!offer) { setErr("No offer for this viewer."); setConnecting(false); return; }
 
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      // 🔁 Twilio ICE via backend
+      const iceServers = await loadIceServers();
+      const pc = new RTCPeerConnection({
+        iceServers,
+        iceTransportPolicy: "all",
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+      });
       pcRef.current = pc;
 
       pc.ontrack = (ev: RTCTrackEvent) => {
-        const stream = ev.streams[0];
+        const stream = ev.streams[0] ?? new MediaStream([ev.track]);
         if (videoRef.current && stream) videoRef.current.srcObject = stream;
       };
 
