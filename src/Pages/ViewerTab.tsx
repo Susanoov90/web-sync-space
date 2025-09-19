@@ -88,6 +88,9 @@ export default function ViewerTab(): JSX.Element {
   // ✅ MediaStream unique pour accumuler audio/vidéo
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
+  // 🔊 Overlay “Activer le son” (déblocage autoplay)
+  const [canUnmute, setCanUnmute] = useState<boolean>(false);
+
   const offerIcePollId = useRef<number | null>(null);
   const seenOfferIce = useRef<Set<string>>(new Set());
   const relayRetriedRef = useRef<boolean>(false); // fallback auto (une seule fois)
@@ -159,7 +162,10 @@ export default function ViewerTab(): JSX.Element {
         }
         const v = videoRef.current;
         if (v && v.srcObject !== ms) v.srcObject = ms;
+
+        // autoplay muted + afficher bouton “Activer le son”
         await ensureVideoPlays();
+        setCanUnmute(true);
       };
 
       pc.onicecandidate = async (ev: RTCPeerConnectionIceEvent) => {
@@ -301,13 +307,35 @@ export default function ViewerTab(): JSX.Element {
       {err && <div style={{ color: "tomato", marginBottom: 8 }}>{err}</div>}
       <div style={{ marginBottom: 8 }}>Status: {status}</div>
 
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        controls
-        style={{ width: "min(95vw, 1280px)", maxHeight: "80vh", background: "#000", borderRadius: 8 }}
-      />
+      {/* Conteneur pour l’overlay “Activer le son” */}
+      <div style={{ position: "relative", display: "inline-block" }}>
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          controls
+          style={{ width: "min(95vw, 1280px)", maxHeight: "80vh", background: "#000", borderRadius: 8 }}
+        />
+        {canUnmute && (
+          <button
+            onClick={() => {
+              const v = videoRef.current;
+              if (!v) return;
+              v.muted = false;       // 👉 les spectateurs entendent l’audio (tab + voix hôte PTT)
+              v.play().catch(()=>{});
+              setCanUnmute(false);
+            }}
+            style={{
+              position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)",
+              padding: "10px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+              background: "#1976d2", color: "#fff", fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.35)"
+            }}
+            title="Activer le son"
+          >
+            🔊 Activer le son
+          </button>
+        )}
+      </div>
     </div>
   );
 }
