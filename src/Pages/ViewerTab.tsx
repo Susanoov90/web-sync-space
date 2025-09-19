@@ -1,6 +1,10 @@
 // src/Pages/ViewerTab.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/** ---- Config TURN/STUN ---- */
+const FORCE_TURN_RELAY = false;     // true = toujours TURN (relay-only) ; false = STUN d'abord
+const ICE_CACHE_TTL_MIN = 25;       // TTL cache ICE (minutes)
+
 /** ---- Types ---- */
 type BgOk = { ok: true } & Record<string, unknown>;
 type BgErr = { ok: false; error?: string };
@@ -31,7 +35,7 @@ function genViewerId(): string {
 /*   Twilio ICE helper (backend) */
 /* ----------------------------- */
 async function loadIceServers(): Promise<RTCIceServer[]> {
-  // 1) cache ~45min (chrome.storage.local)
+  // 1) cache (chrome.storage.local)
   try {
     const key = "wss_ice_cache";
     const cached: any = await new Promise((resolve) =>
@@ -46,11 +50,13 @@ async function loadIceServers(): Promise<RTCIceServer[]> {
   const resp = await fetch("https://websyncspace-twilio-ice.com/ice", { method: "GET" });
   if (!resp.ok) throw new Error("Failed to fetch ICE servers");
   const data = await resp.json();
-  const iceServers: RTCIceServer[] = data.iceServers ?? data.ice_servers ?? [];
+  const iceServers: RTCIceServer[] = (data.iceServers ?? data.ice_servers ?? [])
+    .map((s: any) => ({ urls: s.urls || s.url, username: s.username, credential: s.credential }))
+    .filter((s: any) => !!s.urls);
 
-  // 3) cache 45 min
+  // 3) cache TTL réduit
   try {
-    const expiresAt = Date.now() + 45 * 60 * 1000;
+    const expiresAt = Date.now() + ICE_CACHE_TTL_MIN * 60 * 1000;
     chrome.storage.local.set({ wss_ice_cache: { iceServers, expiresAt } });
   } catch { /* ignore */ }
 
@@ -79,28 +85,50 @@ export default function ViewerTab(): JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
 
+  // ✅ MediaStream unique pour accumuler audio/vidéo
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
   const offerIcePollId = useRef<number | null>(null);
   const seenOfferIce = useRef<Set<string>>(new Set());
+  const relayRetriedRef = useRef<boolean>(false); // fallback auto (une seule fois)
 
   useEffect(() => {
-    void connect();
+    void connect(FORCE_TURN_RELAY);
     return () => { void cleanup(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  async function connect(): Promise<void> {
+  // --- DIAG léger: écouter les events <video> ---
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const log = (e: Event) => console.log(`[viewer:<video>] ${e.type}`, { readyState: v.readyState, paused: v.paused, muted: v.muted });
+    const events = ["loadedmetadata","canplay","playing","waiting","stalled","suspend","emptied","error"];
+    events.forEach(ev => v.addEventListener(ev, log));
+    return () => { events.forEach(ev => v.removeEventListener(ev, log)); };
+  }, []);
+
+  // helper autoplay
+  async function ensureVideoPlays(): Promise<void> {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = true; // indispensable pour l’autoplay Chrome
+    try { await v.play(); } catch { /* ignore */ }
+  }
+
+  async function connect(forceRelay: boolean): Promise<void> {
     if (!sessionId) { setErr("Missing session code."); return; }
     if (connecting || connected) return;
 
     setConnecting(true);
     setErr(null);
-    setStatus("Registering…");
+    setStatus(forceRelay ? "Connecting via TURN…" : "Registering…");
 
     try {
       const reg = await bg<{}>({ type: "wrtc-register-viewer", sessionId, viewerId });
       if (!reg.ok) throw new Error(reg.error || "register failed");
 
-      setStatus("Waiting for offer…");
+      if (!forceRelay) setStatus("Waiting for offer…");
       let offer: RTCSessionDescriptionInit | undefined;
       for (let i = 0; i < 30; i++) {
         const r = await bg<OfferResp>({ type: "wrtc-get-offer-v", sessionId, viewerId });
@@ -110,19 +138,28 @@ export default function ViewerTab(): JSX.Element {
       }
       if (!offer) { setErr("No offer for this viewer."); setConnecting(false); return; }
 
-      // 🔁 Twilio ICE via backend
+      // ICE + PC
       const iceServers = await loadIceServers();
       const pc = new RTCPeerConnection({
         iceServers,
-        iceTransportPolicy: "all",
+        iceTransportPolicy: forceRelay ? "relay" : "all",
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require",
       });
       pcRef.current = pc;
 
-      pc.ontrack = (ev: RTCTrackEvent) => {
-        const stream = ev.streams[0] ?? new MediaStream([ev.track]);
-        if (videoRef.current && stream) videoRef.current.srcObject = stream;
+      pc.ontrack = async (ev: RTCTrackEvent) => {
+        // MediaStream persistante
+        const incoming = ev.track;
+        if (!mediaStreamRef.current) mediaStreamRef.current = new MediaStream();
+        const ms = mediaStreamRef.current;
+
+        if (!ms.getTracks().some((t) => t.id === incoming.id)) {
+          ms.addTrack(incoming);
+        }
+        const v = videoRef.current;
+        if (v && v.srcObject !== ms) v.srcObject = ms;
+        await ensureVideoPlays();
       };
 
       pc.onicecandidate = async (ev: RTCPeerConnectionIceEvent) => {
@@ -138,8 +175,48 @@ export default function ViewerTab(): JSX.Element {
         if (!rr.ok) console.warn("add-answer-cand-v failed:", rr.error);
       };
 
+      pc.onconnectionstatechange = () => {
+        console.log("[viewer] pc.connectionState =", pc.connectionState, "(relay:", forceRelay, ")");
+        if (pc.connectionState === "connected") {
+          setConnected(true);
+          // DIAG: stats 10s
+          const t0 = Date.now();
+          const iv = window.setInterval(async () => {
+            try {
+              const stats = await pc.getStats(null);
+              stats.forEach((r: any) => {
+                if (r.type === "inbound-rtp" && r.kind === "video") {
+                  console.log("[viewer] inbound-rtp video", {
+                    bytes: r.bytesReceived,
+                    framesDecoded: r.framesDecoded,
+                    fps: r.framesPerSecond,
+                    width: r.frameWidth,
+                    height: r.frameHeight,
+                    packetsLost: r.packetsLost,
+                    jitter: r.jitter
+                  });
+                }
+                if (r.type === "candidate-pair" && r.state === "succeeded") {
+                  console.log("[viewer] selected candidate pair", {
+                    local: r.localCandidateId, remote: r.remoteCandidateId, nominated: r.nominated
+                  });
+                }
+              });
+              if (Date.now() - t0 > 10000) window.clearInterval(iv);
+            } catch {}
+          }, 1000);
+        }
+
+        // 🔁 fallback auto : si "all" échoue, retente en relay-only une fois
+        if (pc.connectionState === "failed" && !forceRelay && !relayRetriedRef.current) {
+          relayRetriedRef.current = true;
+          console.warn("[viewer] failed in 'all' mode — retrying with TURN relay-only");
+          void cleanup(true /*keepStatus*/).then(() => connect(true));
+        }
+      };
+
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      setStatus("Creating answer…");
+      setStatus(forceRelay ? "Answering (TURN)..." : "Creating answer…");
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       const ansInit: RTCSessionDescriptionInit = { type: answer.type, sdp: answer.sdp ?? "" };
@@ -182,11 +259,25 @@ export default function ViewerTab(): JSX.Element {
     }, 800);
   }
 
-  async function cleanup(): Promise<void> {
+  async function cleanup(keepStatus = false): Promise<void> {
     if (offerIcePollId.current) { window.clearInterval(offerIcePollId.current); offerIcePollId.current = null; }
     try { pcRef.current?.getSenders().forEach((s) => { try { s.track?.stop(); } catch {} }); } catch {}
     try { pcRef.current?.close(); } catch {}
     pcRef.current = null;
+
+    // libérer MediaStream & <video>
+    if (mediaStreamRef.current) {
+      try { mediaStreamRef.current.getTracks().forEach((t) => t.stop()); } catch {}
+      mediaStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      try { (videoRef.current as any).srcObject = null; } catch {}
+    }
+
+    if (!keepStatus) {
+      setConnected(false);
+      setStatus("Stopped");
+    }
 
     if (sessionId && viewerId) {
       await bg<{}>({ type: "wrtc-viewer-status", sessionId, viewerId, status: "left" });
@@ -201,9 +292,10 @@ export default function ViewerTab(): JSX.Element {
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button onClick={() => void connect()} disabled={connecting || connected}>
+        <button onClick={() => void connect(FORCE_TURN_RELAY)} disabled={connecting || connected}>
           {connecting ? "..." : connected ? "Connected" : "Join"}
         </button>
+        <button onClick={() => void cleanup()} disabled={!connected && !connecting}>Leave</button>
       </div>
 
       {err && <div style={{ color: "tomato", marginBottom: 8 }}>{err}</div>}

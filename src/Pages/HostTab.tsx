@@ -2,6 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ShareCodeButton from "../Button/ShareCodeButton";
 
+/** ---- Config TURN/STUN ---- */
+const FORCE_TURN_RELAY = false;     // true = toujours TURN (relay-only) ; false = STUN d'abord
+const ICE_CACHE_TTL_MIN = 25;       // TTL cache ICE (minutes) pour éviter d'utiliser des creds TURN expirés
+
 /** ---- Types & helpers ---- */
 type BgOk = { ok: true } & Record<string, unknown>;
 type BgErr = { ok: false; error?: string };
@@ -69,13 +73,15 @@ type PcBundle = {
   seenAnsIce: Set<string>;
   ansIcePollId: number | null;
   answerPollId: number | null;
+  /** interne: avons-nous déjà tenté le fallback relay pour ce viewer ? */
+  relayRetried?: boolean;
 };
 
 /* ----------------------------- */
 /*   Twilio ICE helper (backend) */
 /* ----------------------------- */
 async function loadIceServers(): Promise<RTCIceServer[]> {
-  // 1) cache ~45min (chrome.storage.local)
+  // 1) cache (chrome.storage.local)
   try {
     const key = "wss_ice_cache";
     const cached: any = await new Promise((resolve) =>
@@ -86,15 +92,17 @@ async function loadIceServers(): Promise<RTCIceServer[]> {
     }
   } catch { /* ignore */ }
 
-  // 2) fetch depuis ton backend (remplace l’URL en prod)
+  // 2) fetch depuis ton backend
   const resp = await fetch("https://websyncspace-twilio-ice.com/ice", { method: "GET" });
   if (!resp.ok) throw new Error("Failed to fetch ICE servers");
   const data = await resp.json();
-  const iceServers: RTCIceServer[] = data.iceServers ?? data.ice_servers ?? [];
+  const iceServers: RTCIceServer[] = (data.iceServers ?? data.ice_servers ?? [])
+    .map((s: any) => ({ urls: s.urls || s.url, username: s.username, credential: s.credential }))
+    .filter((s: any) => !!s.urls);
 
-  // 3) cache 45 min
+  // 3) cache TTL réduit (25 min)
   try {
-    const expiresAt = Date.now() + 45 * 60 * 1000;
+    const expiresAt = Date.now() + ICE_CACHE_TTL_MIN * 60 * 1000;
     chrome.storage.local.set({ wss_ice_cache: { iceServers, expiresAt } });
   } catch { /* ignore */ }
 
@@ -179,7 +187,7 @@ export default function HostTab(): JSX.Element {
 
     if (!audioElRef.current) {
       const a = document.createElement("audio");
-      a.autoplay = true; a.muted = false; // a.playsInline n'existe pas sur audio
+      a.autoplay = true; a.muted = false;
       audioElRef.current = a;
       document.body.appendChild(a);
     }
@@ -264,6 +272,17 @@ export default function HostTab(): JSX.Element {
       // ✅ Correct capture flow using getMediaStreamId
       const stream = await captureTabById(tabId);
       streamRef.current = stream;
+
+      // DIAG
+      const vTracks = stream.getVideoTracks();
+      const aTracks = stream.getAudioTracks();
+      console.log("[host] captured video tracks:", vTracks.map(t => t.label));
+      console.log("[host] captured audio tracks:", aTracks.map(t => t.label));
+      if (!vTracks.length) console.warn("[host] ⚠️ aucune piste vidéo capturée — les viewers verront un écran noir.");
+
+      // ✅ hint qualité (non bloquant)
+      try { vTracks[0] && ((vTracks[0] as any).contentHint = "text"); } catch {}
+
       if (videoRef.current) videoRef.current.srcObject = stream;
 
       // [9a] si toggle déjà ON, brancher le monitoring maintenant
@@ -293,23 +312,40 @@ export default function HostTab(): JSX.Element {
 
     for (const vid of r.ids) {
       if (!pcs.current.has(vid)) {
-        await setupPcForViewer(vid);
+        await setupPcForViewer(vid, FORCE_TURN_RELAY /* forceRelay initial */);
       }
     }
   }
 
-  async function setupPcForViewer(viewerId: string): Promise<void> {
+  /** Crée (ou recrée) le PC pour un viewer.
+   *  - forceRelay=false -> "all" (STUN puis TURN)
+   *  - forceRelay=true  -> "relay" (TURN only, 443/tcp)
+   */
+  async function setupPcForViewer(viewerId: string, forceRelay: boolean): Promise<void> {
     const stream = streamRef.current;
     if (!stream) return;
 
-    // 🔁 ICI: on remplace la création du PC par Twilio ICE (via backend)
     const iceServers = await loadIceServers();
     const pc = new RTCPeerConnection({
       iceServers,
-      iceTransportPolicy: "all",
+      iceTransportPolicy: forceRelay ? "relay" : "all",
       bundlePolicy: "max-bundle",
       rtcpMuxPolicy: "require",
     });
+
+    const bundle: PcBundle = { pc, seenAnsIce: new Set(), ansIcePollId: null, answerPollId: null, relayRetried: forceRelay };
+    pcs.current.set(viewerId, bundle);
+
+    // suivi d'état + fallback auto (all -> relay)
+    pc.onconnectionstatechange = () => {
+      console.log(`[host] pc[${viewerId}].connectionState =`, pc.connectionState, "(relay:", forceRelay, ")");
+      if (pc.connectionState === "failed" && !forceRelay) {
+        // fallback unique vers relay-only
+        console.warn(`[host] pc[${viewerId}] failed — retry en relay-only`);
+        safeTearDownViewer(viewerId);
+        void setupPcForViewer(viewerId, true);
+      }
+    };
 
     const control = pc.createDataChannel("control");
     control.onopen = () => console.log("[host] control channel open for", viewerId);
@@ -317,7 +353,7 @@ export default function HostTab(): JSX.Element {
     pc.onicecandidate = async (ev: RTCPeerConnectionIceEvent) => {
       const cand: RTCIceCandidate | null = ev.candidate;
       if (!cand) return;
-      const init: RTCIceCandidateInit = cand.toJSON ? cand.toJSON() : {
+      const init: RTCIceCandidateInit = (cand as any).toJSON ? (cand as any).toJSON() : {
         candidate: cand.candidate,
         sdpMid: cand.sdpMid ?? undefined,
         sdpMLineIndex: cand.sdpMLineIndex ?? undefined,
@@ -327,13 +363,13 @@ export default function HostTab(): JSX.Element {
       if (!rr.ok) console.warn("add-offer-cand-v failed:", rr.error);
     };
 
-    // tracks du display
+    // tracks du display (+ micro si dispo)
     stream.getTracks().forEach((t: MediaStreamTrack) => pc.addTrack(t, stream));
-    // [9b] si la piste micro existe déjà, l’ajouter aussi à ce nouveau PC
     if (micStreamRef.current && micTrackRef.current) {
       try { pc.addTrack(micTrackRef.current, micStreamRef.current); } catch {}
     }
 
+    // Offre + publication
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     {
@@ -341,15 +377,21 @@ export default function HostTab(): JSX.Element {
       if (!r.ok) console.warn("wrtc-set-offer-v failed for", viewerId, r.error);
     }
 
-    pcs.current.set(viewerId, { pc, seenAnsIce: new Set(), ansIcePollId: null, answerPollId: null });
-
-    const bundle = pcs.current.get(viewerId)!;
+    // Poll de l'answer
     bundle.answerPollId && window.clearInterval(bundle.answerPollId);
     bundle.answerPollId = window.setInterval(async () => {
       const res = await bg<AnswerResp>({ type: "wrtc-get-viewer-answer", sessionId, viewerId });
       if (!res.ok) return;
       if (res.exists && res.answer && pc && !pc.currentRemoteDescription) {
         await pc.setRemoteDescription(new RTCSessionDescription(res.answer));
+
+        // ✅ demander un keyframe immédiatement après l'answer (débloque la première image)
+        try {
+          const videoSender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+          (videoSender as any)?.requestKeyFrame?.();
+          console.log(`[host] requested keyframe for ${viewerId}`);
+        } catch {}
+
         bundle.ansIcePollId && window.clearInterval(bundle.ansIcePollId);
         bundle.ansIcePollId = window.setInterval(() => pollViewerAnswerCands(viewerId), 800);
       }
@@ -373,6 +415,15 @@ export default function HostTab(): JSX.Element {
         console.warn("addIceCandidate(answer,v) error:", e);
       }
     }
+  }
+
+  function safeTearDownViewer(viewerId: string) {
+    const b = pcs.current.get(viewerId);
+    if (!b) return;
+    b.answerPollId && window.clearInterval(b.answerPollId);
+    b.ansIcePollId && window.clearInterval(b.ansIcePollId);
+    try { b.pc.close(); } catch {}
+    pcs.current.delete(viewerId);
   }
 
   async function stopSharing(): Promise<void> {
