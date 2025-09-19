@@ -1,5 +1,6 @@
 // src/Pages/ViewerTab.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
+import SessionTimer from "../Timer/SessionTimer";
 
 /** ---- Config TURN/STUN ---- */
 const FORCE_TURN_RELAY = false;     // true = toujours TURN (relay-only) ; false = STUN d'abord
@@ -90,6 +91,9 @@ export default function ViewerTab(): JSX.Element {
 
   // 🔊 Overlay “Activer le son” (déblocage autoplay)
   const [canUnmute, setCanUnmute] = useState<boolean>(false);
+
+  // 🕒 Minuteur (start à l’entrée du spectateur)
+  const [timerStartAt, setTimerStartAt] = useState<number | null>(null);
 
   const offerIcePollId = useRef<number | null>(null);
   const seenOfferIce = useRef<Set<string>>(new Set());
@@ -185,6 +189,9 @@ export default function ViewerTab(): JSX.Element {
         console.log("[viewer] pc.connectionState =", pc.connectionState, "(relay:", forceRelay, ")");
         if (pc.connectionState === "connected") {
           setConnected(true);
+          // 🕒 démarre le minuteur à la 1ère connexion réelle (si pas déjà lancé)
+          setTimerStartAt((prev) => prev ?? Date.now());
+
           // DIAG: stats 10s
           const t0 = Date.now();
           const iv = window.setInterval(async () => {
@@ -233,6 +240,9 @@ export default function ViewerTab(): JSX.Element {
 
       setConnected(true);
       setStatus("Connected");
+      // 🕒 sécurité: si on atteint ici avant l’event connected
+      setTimerStartAt((prev) => prev ?? Date.now());
+
       await bg<{}>({ type: "wrtc-viewer-status", sessionId, viewerId, status: "connected" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -283,6 +293,8 @@ export default function ViewerTab(): JSX.Element {
     if (!keepStatus) {
       setConnected(false);
       setStatus("Stopped");
+      // 🕒 reset du minuteur seulement si l’utilisateur quitte vraiment
+      setTimerStartAt(null);
     }
 
     if (sessionId && viewerId) {
@@ -297,11 +309,14 @@ export default function ViewerTab(): JSX.Element {
         Session: <b>{sessionId || "—"}</b> &nbsp;|&nbsp; ViewerId: <b>{viewerId}</b>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
         <button onClick={() => void connect(FORCE_TURN_RELAY)} disabled={connecting || connected}>
           {connecting ? "..." : connected ? "Connected" : "Join"}
         </button>
         <button onClick={() => void cleanup()} disabled={!connected && !connecting}>Leave</button>
+
+        {/* Minuteur aligné sur la même ligne (compte depuis l’entrée du viewer) */}
+        <SessionTimer startAt={timerStartAt} title="Temps passé" />
       </div>
 
       {err && <div style={{ color: "tomato", marginBottom: 8 }}>{err}</div>}
@@ -332,7 +347,7 @@ export default function ViewerTab(): JSX.Element {
             }}
             title="Activer le son"
           >
-            🔊 Activer le son
+            Activer le son
           </button>
         )}
       </div>

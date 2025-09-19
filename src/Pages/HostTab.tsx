@@ -1,6 +1,7 @@
 // src/Pages/HostTab.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import ShareCodeButton from "../Button/ShareCodeButton";
+import SessionTimer from "../Timer/SessionTimer";
 
 /** ---- Config TURN/STUN ---- */
 const FORCE_TURN_RELAY = false;     // true = toujours TURN (relay-only) ; false = STUN d'abord
@@ -142,6 +143,9 @@ export default function HostTab(): JSX.Element {
 
   const pcs = useRef<Map<string, PcBundle>>(new Map());
   const viewersPollId = useRef<number | null>(null);
+
+  // ===== TIMER (host) =====
+  const [timerStartAt, setTimerStartAt] = useState<number | null>(null);
 
   // ===== [9a] Monitoring host (toggle + volume) =====
   const audioElRef = useRef<HTMLAudioElement | null>(null);
@@ -296,6 +300,9 @@ export default function HostTab(): JSX.Element {
 
       setIsSharing(true);
       setStatus("Waiting for viewers…");
+
+      // === TIMER: démarre au lancement du partage ===
+      setTimerStartAt(Date.now());
     } catch (e: any) {
       setErr(e?.message || "Failed to start");
       await stopSharing();
@@ -449,6 +456,9 @@ export default function HostTab(): JSX.Element {
 
     setIsSharing(false);
     setStatus("Stopped");
+
+    // === TIMER: stop ===
+    setTimerStartAt(null);
   }
 
   const connectedCount = viewerIds.filter((id) => viewerInfos[id]?.status === "connected").length;
@@ -460,11 +470,14 @@ export default function HostTab(): JSX.Element {
         Session: <b>{sessionId || "—"} <ShareCodeButton sessionCode={sessionId} /></b> &nbsp;|&nbsp; TabId: <b>{Number.isFinite(tabId ?? NaN) ? tabId : "—"}</b>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
         <button onClick={() => void startSharing()} disabled={busy || isSharing}>
           {busy ? "..." : "Start sharing"}
         </button>
         <button onClick={() => void stopSharing()} disabled={!isSharing}>Stop</button>
+
+        {/* Minuteur aligné sur la même ligne */}
+        <SessionTimer startAt={timerStartAt} title="Temps passé" />
       </div>
 
       {/* [9a] Toggle monitor + volume */}
